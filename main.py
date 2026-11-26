@@ -132,14 +132,81 @@ def hide_console():
         pass
 
 
-def apply_dark_titlebar(root, caption="#0f141a", text="#e6edf3"):
-    """Windows 标题栏改深色：Win10 1903+ 支持暗色模式，Win11 可自定义颜色"""
+LIGHT_THEME = {
+    "dark": False,
+    "BG": "#F4F7F5",
+    "CARD": "#FFFFFF",
+    "CARD_LINE": "#DEE9E2",
+    "DIVIDER": "#E6EDE9",
+    "FG": "#122019",
+    "MUTED": "#5E6E65",
+    "DIM": "#8A9890",
+    "ACCENT": "#0B9152",
+    "DANGER": "#C0392B",
+    "FIELD": "#F2F6F4",
+    "BTN_BG": "#FFFFFF",
+    "BTN_LINE": "#DCE4DF",
+    "BTN_ACTIVE": "#E6F8EF",
+    "BADGE_BG": "#E6F8EF",
+    "BADGE_FG": "#0A7C46",
+    "BADGE_LINE": "#9FDFC0",
+    "BTN_MUTED": "#F2F6F4",
+    "TRACK": "#E7EEE9",
+}
+
+DARK_THEME = {
+    "dark": True,
+    "BG": "#0A0E0B",
+    "CARD": "#0F1B14",
+    "CARD_LINE": "#1C4A33",
+    "DIVIDER": "#1B221D",
+    "FG": "#E8F2EC",
+    "MUTED": "#7C8A80",
+    "DIM": "#5C6A60",
+    "ACCENT": "#3DF08C",
+    "DANGER": "#FF7B72",
+    "FIELD": "#0E1511",
+    "BTN_BG": "#14181A",
+    "BTN_LINE": "#2A3136",
+    "BTN_ACTIVE": "#1C2420",
+    "BADGE_BG": "#143324",
+    "BADGE_FG": "#3DF08C",
+    "BADGE_LINE": "#1C4A33",
+    "BTN_MUTED": "#1F2732",
+    "TRACK": "#1A211C",
+}
+
+
+def system_prefers_light():
+    """Windows 系统外观：设置 → 个性化 → 颜色 → 应用模式"""
+    try:
+        import winreg
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
+            return bool(winreg.QueryValueEx(key, "AppsUseLightTheme")[0])
+    except Exception:
+        return True
+
+
+def resolve_theme(directory):
+    """外观：settings.json 的 appearance（system/light/dark），缺省跟随系统"""
+    mode = load_settings(directory).get("appearance", "system")
+    if mode == "light":
+        return dict(LIGHT_THEME)
+    if mode == "dark":
+        return dict(DARK_THEME)
+    return dict(LIGHT_THEME if system_prefers_light() else DARK_THEME)
+
+
+def apply_titlebar(root, dark, caption, text):
+    """按当前主题设置标题栏颜色（Win10 1903+ 暗色，Win11 可自定义颜色）"""
     try:
         root.update_idletasks()
         hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
         if not hwnd:
             return
-        enabled = ctypes.c_int(1)
+        enabled = ctypes.c_int(1 if dark else 0)
         for attr in (20, 19):   # DWMWA_USE_IMMERSIVE_DARK_MODE（旧系统用 19）
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, attr, ctypes.byref(enabled), ctypes.sizeof(enabled))
@@ -262,6 +329,19 @@ def print_status(store):
 
 def run_ui(args, show=True):
     """托盘常驻 + 三平台账号窗口；关闭窗口只隐藏到托盘，退出走托盘菜单"""
+    import threading
+
+    # 后台自动签到只启动一次：切换主题会重建窗口，不能重复起线程
+    threading.Thread(target=loop, args=(args,), daemon=True).start()
+
+    while True:
+        result = _run_ui_once(args, show)
+        if result != "restart":
+            return result
+        show = True
+
+
+def _run_ui_once(args, show=True):
     import queue
     import threading
     import tkinter as tk
@@ -270,27 +350,32 @@ def run_ui(args, show=True):
 
     hide_console()
     store_dir = checkin_core.CheckinStore(args.state_dir).dir
-    # 窗口模式同样在后台跑自动签到，托盘常驻期间不依赖 --silent
-    threading.Thread(target=loop, args=(args,), daemon=True).start()
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
 
-    BG, CARD = "#0F141A", "#161D26"
-    CARD_LINE = "#24303D"
-    FG, MUTED, DIM = "#E6EDF3", "#8B98A5", "#5B6673"
-    ACCENT, DANGER = "#32F08C", "#FF7B72"
+    theme = resolve_theme(store_dir)
+    BG, CARD = theme["BG"], theme["CARD"]
+    CARD_LINE, DIVIDER = theme["CARD_LINE"], theme["DIVIDER"]
+    FG, MUTED, DIM = theme["FG"], theme["MUTED"], theme["DIM"]
+    ACCENT, DANGER = theme["ACCENT"], theme["DANGER"]
+    FIELD, BTN_BG = theme["FIELD"], theme["BTN_BG"]
+    BTN_LINE, BTN_ACTIVE = theme["BTN_LINE"], theme["BTN_ACTIVE"]
+    BADGE_BG, BADGE_FG = theme["BADGE_BG"], theme["BADGE_FG"]
+    BADGE_LINE, BTN_MUTED = theme["BADGE_LINE"], theme["BTN_MUTED"]
     FONT = "Microsoft YaHei UI"
 
     root = tk.Tk()
     root.title(TITLE)
-    root.geometry("520x480")
-    root.minsize(520, 340)
+    root.geometry("460x440")
+    root.minsize(460, 320)
     root.configure(bg=BG)
-    root.after(60, lambda: apply_dark_titlebar(root, caption=BG.lower(), text=FG))
+    root.after(60, lambda: apply_titlebar(root, theme["dark"], BG.lower(), FG))
     if not show:
         root.withdraw()
+
+    restart = {"value": False}
 
     ui_queue = queue.Queue()
 
@@ -309,29 +394,52 @@ def run_ui(args, show=True):
         root.deiconify()
         root.lift()
         root.attributes("-topmost", True)
+        root.focus_force()
         root.after(800, lambda: root.attributes("-topmost", False))
 
     def hide_window():
         root.withdraw()
 
+    def hide_if_unfocused():
+        if root.state() != "normal":
+            return
+        try:
+            if root.focus_get() is None:
+                hide_window()
+        except (KeyError, tk.TclError):
+            pass
+
+    def on_focus_out(event=None):
+        try:
+            root.after(120, hide_if_unfocused)
+        except tk.TclError:
+            pass
+
     # ---- 头部 ----
     tk.Frame(root, bg=ACCENT, height=1).place(x=0, y=0, relwidth=1)
     head = tk.Frame(root, bg=BG)
-    head.pack(fill="x", padx=20, pady=(16, 10))
+    head.pack(fill="x", padx=16, pady=(14, 10))
     title_row = tk.Frame(head, bg=BG)
     title_row.pack(side="left", anchor="s")
     tk.Label(title_row, text=TITLE, bg=BG, fg=FG,
-             font=(FONT, 15, "bold")).pack(side="left")
+             font=(FONT, 14, "bold")).pack(side="left")
     tk.Label(title_row, text="· " + PLATFORM_LINE, bg=BG, fg=MUTED,
-             font=(FONT, 9)).pack(side="left", padx=(7, 0), pady=(5, 0))
+             font=(FONT, 8)).pack(side="left", padx=(6, 0), pady=(4, 0))
     tk.Label(head, text=datetime.now().strftime("%Y-%m-%d"), bg=BG, fg=DIM,
-             font=(FONT, 9)).pack(side="right", pady=(5, 0))
+             font=(FONT, 8)).pack(side="right", pady=(4, 0))
+    tk.Button(head, text="☀" if theme["dark"] else "☾",
+              command=lambda: switch_theme(), relief="flat", bd=0,
+              highlightthickness=1, highlightbackground=BTN_LINE, bg=FIELD,
+              fg=ACCENT if theme["dark"] else MUTED,
+              activebackground=BTN_ACTIVE, activeforeground=ACCENT,
+              cursor="hand2", font=(FONT, 10), width=2, padx=0, pady=1).pack(
+        side="right", padx=(0, 8), pady=(1, 0))
 
     # ---- 卡片区（高度超限时滚动）----
     holder = tk.Frame(root, bg=BG)
-    holder.pack(fill="both", expand=True, padx=20)
+    holder.pack(fill="both", expand=True, padx=16)
     canvas = tk.Canvas(holder, bg=BG, highlightthickness=0, bd=0,
-                       yscrollincrement=18)
+                       yscrollincrement=16)
     scrollbar = tk.Scrollbar(holder, orient="vertical", command=canvas.yview)
     body = tk.Frame(canvas, bg=BG)
     body_id = canvas.create_window((0, 0), window=body, anchor="nw")
@@ -342,59 +450,59 @@ def run_ui(args, show=True):
 
     # ---- 底部信息 ----
     foot = tk.Frame(root, bg=BG)
-    foot.pack(fill="x", padx=20, pady=(6, 14))
-    tk.Frame(foot, bg=CARD_LINE, height=1).pack(fill="x", pady=(0, 6))
+    foot.pack(fill="x", padx=16, pady=(6, 12))
+    tk.Frame(foot, bg=DIVIDER, height=1).pack(fill="x", pady=(0, 5))
 
     def info_row(label):
-        row = tk.Frame(foot, bg=BG, height=34)
+        row = tk.Frame(foot, bg=BG, height=32)
         row.pack(fill="x")
         row.pack_propagate(False)
-        tk.Label(row, text=label, bg=BG, fg=MUTED, font=(FONT, 9),
-                 width=8, anchor="w").pack(side="left")
+        tk.Label(row, text=label, bg=BG, fg=MUTED, font=(FONT, 8),
+                 width=7, anchor="w").pack(side="left")
         content = tk.Frame(row, bg=BG)
         content.pack(side="left", fill="x", expand=True)
         return content
 
     sign_row = info_row("签到")
     summary_label = tk.Label(sign_row, text="正在读取…", bg=BG, fg=MUTED,
-                             font=(FONT, 9))
+                             font=(FONT, 8))
     summary_label.pack(side="left")
 
     time_row = info_row("签到时间")
     hour_var = tk.StringVar(value="%02d" % configured_start_hour(store_dir))
     hour_box = tk.Spinbox(time_row, from_=0, to=23, width=3, textvariable=hour_var,
-                          command=lambda: on_hour_change(), font=(FONT, 9),
-                          justify="center", bg=CARD, fg=FG, insertbackground=FG,
-                          relief="flat", bd=0, buttonbackground="#222C38")
+                          command=lambda: on_hour_change(), font=(FONT, 8),
+                          justify="center", bg=FIELD, fg=FG, insertbackground=FG,
+                          relief="flat", bd=0, buttonbackground=BTN_LINE)
     hour_box.pack(side="left")
     hour_box.bind("<Return>", lambda event: on_hour_change())
     hour_box.bind("<FocusOut>", lambda event: on_hour_change())
-    range_label = tk.Label(time_row, text="", bg=BG, fg=MUTED, font=(FONT, 9))
+    range_label = tk.Label(time_row, text="", bg=BG, fg=MUTED, font=(FONT, 8))
     range_label.pack(side="left", padx=(10, 0))
 
     auto_row = info_row("开机自启")
     auto_btn = tk.Button(auto_row, text="", command=lambda: toggle_autostart(),
                          relief="flat", bd=0, cursor="hand2", anchor="w", bg=BG,
                          fg=FG, activebackground=BG, activeforeground=ACCENT,
-                         font=(FONT, 9), padx=0, pady=0)
+                         font=(FONT, 8), padx=0, pady=0)
     auto_btn.pack(side="left")
     tip_label = tk.Label(auto_row, text="", bg=BG, fg=DIM, font=(FONT, 8))
     tip_label.pack(side="left", padx=(12, 0))
 
     actions = tk.Frame(foot, bg=BG)
-    actions.pack(fill="x", pady=(8, 0))
-    tk.Label(actions, text="by bmfish · github.com/bmfish/ai-checkin-win",
-             bg=BG, fg=DIM, font=(FONT, 7)).pack(side="left")
+    actions.pack(fill="x", pady=(6, 0))
 
     def flat_button(text, command, primary=False):
         return tk.Button(
             actions, text=text, command=command, relief="flat", bd=0,
-            cursor="hand2", padx=16, pady=5,
-            font=(FONT, 9, "bold" if primary else "normal"),
-            bg=ACCENT if primary else CARD,
-            fg="#06130C" if primary else FG,
-            activebackground="#4DD9A0" if primary else "#222C38",
-            activeforeground="#06130C" if primary else FG)
+            highlightthickness=1,
+            highlightbackground=BADGE_LINE if primary else BTN_LINE,
+            cursor="hand2", padx=14, pady=4,
+            font=(FONT, 8, "bold" if primary else "normal"),
+            bg=BADGE_BG if primary else BTN_BG,
+            fg=BADGE_FG if primary else FG,
+            activebackground=BADGE_LINE if primary else BTN_ACTIVE,
+            activeforeground=BADGE_FG if primary else FG)
 
     sign_btn = flat_button("立即签到", lambda: do_checkin(), primary=True)
     sign_btn.pack(side="right")
@@ -414,27 +522,28 @@ def run_ui(args, show=True):
 
     def make_card(row):
         qoder = row["platform"] == "Qoder"
-        box = tk.Frame(body, bg=CARD, height=118 if qoder else 176)
-        box.pack(fill="x", pady=(0, 12))
+        box = tk.Frame(body, bg=CARD, height=104 if qoder else 146)
+        box.pack(fill="x", pady=(0, 10))
         box.pack_propagate(False)
         inner = tk.Frame(box, bg=CARD)
-        inner.pack(fill="both", expand=True, padx=18, pady=14)
+        inner.pack(fill="both", expand=True, padx=15, pady=12)
 
         top = tk.Frame(inner, bg=CARD)
         top.pack(fill="x")
         tk.Label(top, text=row.get("name") or "-", bg=CARD, fg=FG,
-                 font=(FONT, 14, "bold"), anchor="w").pack(
+                 font=(FONT, 13, "bold"), anchor="w").pack(
             side="left", fill="x", expand=True)
-        tk.Label(top, text="已签" if row.get("signed") else "待签", bg=CARD,
-                 fg=ACCENT if row.get("signed") else MUTED, font=(FONT, 8),
-                 padx=8, pady=2).pack(side="right")
+        tk.Label(top, text="已签" if row.get("signed") else "待签",
+                 bg=BADGE_BG if row.get("signed") else FIELD,
+                 fg=BADGE_FG if row.get("signed") else MUTED,
+                 font=(FONT, 8), padx=7, pady=1).pack(side="right")
         tk.Label(top, text=row["platform"], bg=CARD, fg=MUTED,
-                 font=(FONT, 9)).pack(side="right", padx=(0, 8))
+                 font=(FONT, 8)).pack(side="right", padx=(0, 8))
 
         if not row.get("ok"):
             tk.Label(inner, text=row.get("message") or "查询失败", bg=CARD,
-                     fg=DANGER, font=(FONT, 9), wraplength=450,
-                     justify="left").pack(anchor="w", pady=(12, 0))
+                     fg=DANGER, font=(FONT, 8), wraplength=400,
+                     justify="left").pack(anchor="w", pady=(10, 0))
             return
 
         primary = float(row.get("primary") or 0)
@@ -446,16 +555,16 @@ def run_ui(args, show=True):
             value_text, unit = fmt_money(primary), "今日消耗"
 
         line = tk.Frame(inner, bg=CARD)
-        line.pack(fill="x", pady=(6, 0))
+        line.pack(fill="x", pady=(5, 0))
         tk.Label(line, text=value_text, bg=CARD,
                  fg=ACCENT if primary > 0 else DIM,
-                 font=(FONT, 24, "bold")).pack(side="left")
+                 font=(FONT, 21, "bold")).pack(side="left")
         tk.Label(line, text=unit, bg=CARD, fg=MUTED,
-                 font=(FONT, 9)).pack(side="left", padx=(8, 10))
-        tk.Frame(line, bg=CARD_LINE, width=1, height=18).pack(
-            side="left", padx=(0, 10), pady=6)
+                 font=(FONT, 8)).pack(side="left", padx=(8, 8))
+        tk.Frame(line, bg=CARD_LINE, width=1, height=16).pack(
+            side="left", padx=(0, 8), pady=5)
         tk.Label(line, text=row.get("secondary") or "", bg=CARD, fg=FG,
-                 font=(FONT, 9)).pack(side="left")
+                 font=(FONT, 8)).pack(side="left")
 
         if not qoder:
             balance, total = row.get("balance"), row.get("total")
@@ -466,7 +575,13 @@ def run_ui(args, show=True):
                 if total is not None:
                     text += "   /   总额  %s" % fmt_money(total)
             tk.Label(inner, text=text, bg=CARD, fg=MUTED,
-                     font=(FONT, 8)).pack(anchor="w", pady=(8, 0))
+                     font=(FONT, 8)).pack(anchor="w", pady=(6, 0))
+            if total and total > 0:
+                ratio = max(0.0, min(1.0, float(balance or 0) / float(total)))
+                track = tk.Frame(inner, bg=theme["TRACK"], height=5)
+                track.pack(fill="x", pady=(8, 0))
+                tk.Frame(track, bg=ACCENT, height=5).place(
+                    x=0, y=0, relwidth=ratio, relheight=1)
 
     def update_scroll():
         if body.winfo_reqheight() > canvas.winfo_height() + 1:
@@ -480,23 +595,23 @@ def run_ui(args, show=True):
         for widget in body.winfo_children():
             widget.destroy()
         if not rows:
-            box = tk.Frame(body, bg=CARD, height=118)
+            box = tk.Frame(body, bg=CARD, height=104)
             box.pack(fill="x")
             box.pack_propagate(False)
             inner = tk.Frame(box, bg=CARD)
-            inner.pack(fill="both", expand=True, padx=18, pady=16)
+            inner.pack(fill="both", expand=True, padx=15, pady=14)
             tk.Label(inner, text="未发现本机客户端凭据", bg=CARD, fg=FG,
-                     font=(FONT, 10, "bold")).pack(anchor="w")
+                     font=(FONT, 9, "bold")).pack(anchor="w")
             tk.Label(inner, text="请先登录 Trae / CodeBuddy / Qoder 客户端",
-                     bg=CARD, fg=MUTED, font=(FONT, 9)).pack(anchor="w", pady=(4, 0))
+                     bg=CARD, fg=MUTED, font=(FONT, 8)).pack(anchor="w", pady=(4, 0))
         else:
             for row in rows:
                 make_card(row)
-        # 高度按卡片数自适应：头部 + 底部信息 + 卡片区；超过 720 交给滚动
+        # 高度按卡片数自适应：头部 + 底部信息 + 卡片区；超过 660 交给滚动
         root.update_idletasks()
         needed = (body.winfo_reqheight() + head.winfo_reqheight()
-                  + foot.winfo_reqheight() + 50)
-        root.geometry("520x%d" % min(720, max(340, needed)))
+                  + foot.winfo_reqheight() + 44)
+        root.geometry("460x%d" % min(660, max(320, needed)))
         root.after(20, update_scroll)
 
     def update_summary(rows):
@@ -507,8 +622,8 @@ def run_ui(args, show=True):
         gained = store.today_credits(today)
         if not total:
             summary_label.configure(text="未发现账号", fg=MUTED)
-            sign_btn.configure(state=tk.DISABLED, text="无账号", bg="#1F2732",
-                               disabledforeground=MUTED)
+            sign_btn.configure(state=tk.DISABLED, text="无账号", bg=BTN_MUTED,
+                               fg=MUTED, disabledforeground=MUTED)
             return
         summary_label.configure(
             text="%d/%d 已签  ·  今日获得 %s 积分" % (
@@ -516,10 +631,11 @@ def run_ui(args, show=True):
             fg=FG)
         if signed >= total:
             # 今日全部账号已签：按钮禁用，避免重复领取
-            sign_btn.configure(state=tk.DISABLED, text="今日已签 ✓", bg="#1F2732",
-                               disabledforeground=MUTED)
+            sign_btn.configure(state=tk.DISABLED, text="今日已签 ✓", bg=BTN_MUTED,
+                               fg=MUTED, disabledforeground=MUTED)
         else:
-            sign_btn.configure(state=tk.NORMAL, text="立即签到", bg=ACCENT)
+            sign_btn.configure(state=tk.NORMAL, text="立即签到",
+                               bg=BADGE_BG, fg=BADGE_FG)
 
     def load_usage(force=False):
         if state["busy"]:
@@ -552,7 +668,8 @@ def run_ui(args, show=True):
         if state["signing"]:
             return
         state["signing"] = True
-        sign_btn.configure(state=tk.DISABLED, text="签到中…")
+        sign_btn.configure(state=tk.DISABLED, text="签到中…", bg=BTN_MUTED,
+                           disabledforeground=MUTED)
         refresh_btn.configure(state=tk.DISABLED)
 
         def work():
@@ -610,6 +727,17 @@ def run_ui(args, show=True):
             pass
         post(root.destroy)
 
+    def switch_theme():
+        """浅色 / 深色切换：记住选择，停掉托盘后重建窗口"""
+        save_settings(store_dir, {
+            "appearance": "light" if theme["dark"] else "dark"})
+        restart["value"] = True
+        try:
+            tray.stop()
+        except Exception:
+            pass
+        root.destroy()
+
     def on_wheel(event):
         if body.winfo_reqheight() <= canvas.winfo_height():
             return
@@ -623,6 +751,8 @@ def run_ui(args, show=True):
     canvas.bind("<Configure>", lambda event: (
         canvas.itemconfigure(body_id, width=event.width), update_scroll()))
     root.bind_all("<MouseWheel>", on_wheel)
+    # 点窗口以外的空白处（切到其他程序）自动收起
+    root.bind("<FocusOut>", on_focus_out)
 
     update_range_text()
     update_autostart()
@@ -653,9 +783,11 @@ def run_ui(args, show=True):
     # 双击后置前显示，避免窗口藏在浏览器/IDE 后面
     root.lift()
     root.attributes("-topmost", True)
+    if show:
+        root.focus_force()
     root.after(1200, lambda: root.attributes("-topmost", False))
     root.mainloop()
-    return 0
+    return "restart" if restart["value"] else 0
 
 
 def loop(args):
