@@ -1,4 +1,4 @@
-"""三平台每日签到核心（Trae / WorkBuddy / Qoder）
+"""双平台每日签到核心（Trae / WorkBuddy）
 
 保留 Trae 原有的安全策略不动：
   - 凭据只读本机客户端存储（trae_client_credentials）
@@ -6,8 +6,8 @@
   - 今日已签（本地水位 / 服务端 did_checked_in）绝不重复 claim
   - 失败 1 小时内不重试；成功与失败都写本地记录 + 文本日志
 
-WorkBuddy / Qoder 复用同一套水位、随机分钟与失败冷却，只是账号 key 带
-"wb:" / "qd:" 前缀；Trae 的 key 仍是裸 uid，兼容旧版留下的 state.json。
+WorkBuddy 复用同一套水位、随机分钟与失败冷却，只是账号 key 带
+"wb:" 前缀；Trae 的 key 仍是裸 uid，兼容旧版留下的 state.json。
 """
 import hashlib
 import json
@@ -17,7 +17,6 @@ import time
 from datetime import datetime
 
 import platforms
-import qoder_checkin
 import trae_checkin
 import trae_client_credentials
 import workbuddy_checkin
@@ -197,7 +196,7 @@ def _log(msg):
 
 def run_once(store, now=None, force=False, enabled=True, start_hour=9,
              discover=None, emit=None):
-    """执行一轮签到（三平台），返回本轮结果列表。
+    """执行一轮签到（双平台），返回本轮结果列表。
 
     每条结果是 {"uid", "platform", "action", "message", "credits"}，action 取值：
     done / already / skipped / failed / error。
@@ -213,7 +212,7 @@ def run_once(store, now=None, force=False, enabled=True, start_hour=9,
                                    microsecond=0).timestamp())
     accounts = (discover or platforms.discover)(now=now_dt)
     if not accounts:
-        emit("未发现本机客户端凭据（请先登录 Trae / CodeBuddy / Qoder）")
+        emit("未发现本机客户端凭据（请先登录 Trae / CodeBuddy）")
         return []
     results = []
     for acc in accounts:
@@ -250,8 +249,6 @@ def _checkin_account(store, acc, now_epoch, day_start, today,
         return ("skipped", "失败冷却中", 0.0)
     if acc.platform == "WorkBuddy":
         return _checkin_workbuddy(store, acc, now_epoch, today)
-    if acc.platform == "Qoder":
-        return _checkin_qoder(store, acc, now_epoch, today)
     return _checkin_trae(store, acc, now_epoch, today)
 
 
@@ -320,39 +317,4 @@ def _checkin_workbuddy(store, acc, now_epoch, today):
     store.append_log(acc.key, False, 0, result.message, epoch=now_epoch)
     store.mark_fail(acc.key, now_epoch)
     return ("failed", result.message or "签到失败", 0.0)
-
-
-def _checkin_qoder(store, acc, now_epoch, today):
-    """Qoder：可领活动逐个 claim；没有可领活动也算今日完成"""
-    auth = acc.credential
-    campaigns, unauthorized = qoder_checkin.campaigns(auth)
-    if unauthorized:
-        store.append_log(acc.key, False, 0, "Qoder 登录已过期", epoch=now_epoch)
-        store.mark_fail(acc.key, now_epoch)
-        return ("failed", "Qoder 登录已过期", 0.0)
-    if campaigns is None:
-        # 网络/响应异常不能当成「没有可领活动」，否则会误记今日已签
-        store.append_log(acc.key, False, 0, "活动查询失败", epoch=now_epoch)
-        store.mark_fail(acc.key, now_epoch)
-        return ("failed", "活动查询失败", 0.0)
-    claimable = [c for c in campaigns if c.claimable]
-    if not claimable:
-        store.mark_done(acc.key, today)
-        return ("already", "暂无可领活动", 0.0)
-    claimed = 0
-    last_message = ""
-    for campaign in claimable:
-        result = qoder_checkin.claim(auth, campaign.id)
-        last_message = result.message
-        if result.ok:
-            claimed += 1
-        time.sleep(1.5)
-    if claimed > 0:
-        message = "领取 %d 个活动" % claimed
-        store.mark_done(acc.key, today)
-        store.record_once(acc.key, today, claimed, message, epoch=now_epoch)
-        return ("done", message, float(claimed))
-    store.append_log(acc.key, False, 0, last_message, epoch=now_epoch)
-    store.mark_fail(acc.key, now_epoch)
-    return ("failed", last_message or "领取失败", 0.0)
 

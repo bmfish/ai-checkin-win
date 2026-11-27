@@ -1,6 +1,6 @@
 """AI 签到（独立 Windows 程序）
 
-功能：Trae / WorkBuddy / Qoder 三个平台的每日签到合到一个托盘程序里，
+功能：Trae / WorkBuddy 两个平台的每日签到合到一个托盘程序里，
 自动签到 + 签到记录 + 今日状态，不含其他统计。
 
 用法：
@@ -44,7 +44,7 @@ except Exception:
 
 APP_NAME = "AICheckin"
 TITLE = "AI 签到"
-PLATFORM_LINE = "Trae / WorkBuddy / Qoder"
+PLATFORM_LINE = "Trae / WorkBuddy"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 SETTINGS_FILE = "settings.json"
 DEFAULT_START_HOUR = 9
@@ -305,7 +305,7 @@ def print_status(store):
     except Exception:
         accounts = []
     if not accounts:
-        print("账号: 未发现本机客户端凭据（请先登录 Trae / CodeBuddy / Qoder）")
+        print("账号: 未发现本机客户端凭据（请先登录 Trae / CodeBuddy）")
     for acc in accounts:
         done = store.done_today(acc.key, today)
         slot = checkin_core.slot_minute(acc.key, today)
@@ -328,7 +328,7 @@ def print_status(store):
 
 
 def run_ui(args, show=True):
-    """托盘常驻 + 三平台账号窗口；关闭窗口只隐藏到托盘，退出走托盘菜单"""
+    """托盘常驻 + 双平台账号窗口；关闭窗口只隐藏到托盘，退出走托盘菜单"""
     import threading
 
     # 后台自动签到只启动一次：切换主题会重建窗口，不能重复起线程
@@ -517,12 +517,8 @@ def _run_ui_once(args, show=True):
             return "%.0f" % number
         return "%.2f" % number
 
-    def fmt_count(value):
-        return "%d" % int(value or 0)
-
     def make_card(row):
-        qoder = row["platform"] == "Qoder"
-        box = tk.Frame(body, bg=CARD, height=104 if qoder else 146)
+        box = tk.Frame(body, bg=CARD, height=146)
         box.pack(fill="x", pady=(0, 10))
         box.pack_propagate(False)
         inner = tk.Frame(box, bg=CARD)
@@ -547,9 +543,7 @@ def _run_ui_once(args, show=True):
             return
 
         primary = float(row.get("primary") or 0)
-        if qoder:
-            value_text, unit = fmt_count(primary), "个可领活动"
-        elif row["platform"] == "WorkBuddy":
+        if row["platform"] == "WorkBuddy":
             value_text, unit = fmt_money(primary), "今日积分"
         else:
             value_text, unit = fmt_money(primary), "今日消耗"
@@ -566,22 +560,21 @@ def _run_ui_once(args, show=True):
         tk.Label(line, text=row.get("secondary") or "", bg=CARD, fg=FG,
                  font=(FONT, 8)).pack(side="left")
 
-        if not qoder:
-            balance, total = row.get("balance"), row.get("total")
-            if balance is None:
-                text = "余额  -"
-            else:
-                text = "余额  %s" % fmt_money(balance)
-                if total is not None:
-                    text += "   /   总额  %s" % fmt_money(total)
-            tk.Label(inner, text=text, bg=CARD, fg=MUTED,
-                     font=(FONT, 8)).pack(anchor="w", pady=(6, 0))
-            if total and total > 0:
-                ratio = max(0.0, min(1.0, float(balance or 0) / float(total)))
-                track = tk.Frame(inner, bg=theme["TRACK"], height=5)
-                track.pack(fill="x", pady=(8, 0))
-                tk.Frame(track, bg=ACCENT, height=5).place(
-                    x=0, y=0, relwidth=ratio, relheight=1)
+        balance, total = row.get("balance"), row.get("total")
+        if balance is None:
+            text = "余额  -"
+        else:
+            text = "余额  %s" % fmt_money(balance)
+            if total is not None:
+                text += "   /   总额  %s" % fmt_money(total)
+        tk.Label(inner, text=text, bg=CARD, fg=MUTED,
+                 font=(FONT, 8)).pack(anchor="w", pady=(6, 0))
+        if total and total > 0:
+            ratio = max(0.0, min(1.0, float(balance or 0) / float(total)))
+            track = tk.Frame(inner, bg=theme["TRACK"], height=5)
+            track.pack(fill="x", pady=(8, 0))
+            tk.Frame(track, bg=ACCENT, height=5).place(
+                x=0, y=0, relwidth=ratio, relheight=1)
 
     def update_scroll():
         if body.winfo_reqheight() > canvas.winfo_height() + 1:
@@ -602,7 +595,7 @@ def _run_ui_once(args, show=True):
             inner.pack(fill="both", expand=True, padx=15, pady=14)
             tk.Label(inner, text="未发现本机客户端凭据", bg=CARD, fg=FG,
                      font=(FONT, 9, "bold")).pack(anchor="w")
-            tk.Label(inner, text="请先登录 Trae / CodeBuddy / Qoder 客户端",
+            tk.Label(inner, text="请先登录 Trae / CodeBuddy 客户端",
                      bg=CARD, fg=MUTED, font=(FONT, 8)).pack(anchor="w", pady=(4, 0))
         else:
             for row in rows:
@@ -817,7 +810,7 @@ def loop(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="AI 签到（Trae / WorkBuddy / Qoder 每日自动签到）")
+        description="AI 签到（Trae / WorkBuddy 每日自动签到）")
     parser.add_argument("--silent", action="store_true",
                         help="托盘常驻 + 后台自动签到（不显示窗口）")
     parser.add_argument("--once", action="store_true", help="立即签到一次（已签账号仍跳过）")

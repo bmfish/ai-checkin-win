@@ -1,5 +1,5 @@
 @echo off
-rem AI 签到（Trae / WorkBuddy / Qoder）- 打包成单文件 exe
+rem AI 签到（Trae / WorkBuddy）- 打包成单文件 exe
 setlocal
 cd /d "%~dp0"
 

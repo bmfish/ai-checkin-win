@@ -1,11 +1,10 @@
-"""三平台账号发现与今日状态汇总（供界面与签到调度共用）
+"""双平台账号发现与今日状态汇总（供界面与签到调度共用）
 
 Trae 的账号 key 沿用裸 uid（与旧版 trae-checkin 的 state.json 水位兼容），
-WorkBuddy / Qoder 用 "wb:" / "qd:" 前缀，避免不同平台的 id 互相覆盖。
+WorkBuddy 用 "wb:" 前缀，避免不同平台的 id 互相覆盖。
 """
 from datetime import datetime
 
-import qoder_checkin
 import today_usage
 import trae_client_credentials
 import workbuddy_checkin
@@ -25,7 +24,7 @@ class PlatformAccount:
 
 
 def discover(now=None, refresh_expired=True):
-    """本机三平台账号（按 平台 顺序：Trae / WorkBuddy / Qoder）"""
+    """本机双平台账号（按平台顺序：Trae / WorkBuddy）"""
     accounts = []
     for cred in trae_client_credentials.discover(now=now):
         accounts.append(PlatformAccount(
@@ -35,11 +34,6 @@ def discover(now=None, refresh_expired=True):
         accounts.append(PlatformAccount(
             "WorkBuddy", "wb:%s" % cred.uid, cred.uid, cred.nickname or cred.uid,
             cred, "CodeBuddy CN"))
-    auth = qoder_checkin.load_auth()
-    if auth:
-        uid = auth.uid or "account"
-        accounts.append(PlatformAccount(
-            "Qoder", "qd:%s" % uid, uid, auth.uid or "Qoder", auth, "Qoder"))
     return accounts
 
 
@@ -89,30 +83,6 @@ def usage_rows(store, force=False, now=None):
             "balance": balance["remain"] if balance else None,
             "total": balance["total"] if balance else None,
             "message": st.message or "查询失败",
-        })
-
-    auth = qoder_checkin.load_auth()
-    if auth:
-        campaigns, unauthorized = qoder_checkin.campaigns(auth)
-        if campaigns is None:
-            campaigns, failed = [], True
-        else:
-            failed = False
-        claimable = [c for c in campaigns if c.claimable]
-        signed = not unauthorized and not failed and not claimable
-        message = "登录已过期，请重新登录 Qoder" if unauthorized else (
-            "活动查询失败" if failed else "")
-        rows.append({
-            "platform": "Qoder",
-            "key": "qd:%s" % (auth.uid or "account"),
-            "name": auth.uid or "Qoder",
-            "ok": not unauthorized and not failed,
-            "signed": signed,
-            "primary": float(len(claimable)),
-            "secondary": ("可领 %d 个活动" % len(claimable)) if claimable else "暂无新活动",
-            "balance": None,
-            "total": None,
-            "message": message,
         })
 
     return rows
